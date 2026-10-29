@@ -1,24 +1,47 @@
-# Note, this does not work. I spent literally 4h trying to write simple
-# CMakeLists.txt that can create setup I need. I gave up. We have project 
-# files for MSVC, Xcode, and Linux that are working and are enough. 
-# If you have time to play with this, enjoy. -Slajerek
+# CMakeLists.txt is supported for Linux only
 
-cmake_minimum_required(VERSION 3.10)
+# llama.cpp's CMake requires >= 3.14
+cmake_minimum_required(VERSION 3.14)
 project(MTEngineSDL)
 
-if(UNIX AND NOT APPLE)
-    set(LINUX TRUE)
-	set(PLATFORM_FOLDER "Linux")
+# llama.cpp integration
+option(MT_ENABLE_LLAMA_CPP "Enable llama.cpp integration" ON)
+option(MT_LLAMA_CUDA "Enable llama.cpp CUDA backend" OFF)
+option(MT_LLAMA_VULKAN "Enable llama.cpp Vulkan backend" OFF)
+option(MT_ENABLE_MBEDTLS "Enable mbedTLS HTTPS support (cpp-httplib)" ON)
+option(MT_ENABLE_FTXUI "Enable FTXUI terminal UI library" ON)
+option(MT_GGML_NATIVE "Enable native CPU optimizations for ggml (disable for VMs)" ON)
+
+# Auto-checkout submodules if not present
+find_package(Git QUIET)
+if (GIT_FOUND AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/.gitmodules")
+    if (NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/other/lib/llama.cpp/CMakeLists.txt" OR
+        NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/other/lib/mbedtls/CMakeLists.txt" OR
+        NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/other/lib/ftxui/CMakeLists.txt")
+        message(STATUS "Initializing git submodules...")
+        execute_process(
+            COMMAND ${GIT_EXECUTABLE} submodule update --init --recursive
+            WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
+            RESULT_VARIABLE GIT_SUBMODULE_RESULT
+        )
+        if (NOT GIT_SUBMODULE_RESULT EQUAL 0)
+            message(WARNING "git submodule update failed (exit ${GIT_SUBMODULE_RESULT})")
+        endif()
+    endif()
 endif()
 
-if(UNIX AND APPLE)
-	set(MACOS TRUE)
-	set(PLATFORM_FOLDER "MacOS")
+# Disable features if submodules are still missing after auto-checkout attempt
+if (MT_ENABLE_LLAMA_CPP AND NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/other/lib/llama.cpp/CMakeLists.txt")
+    message(WARNING "llama.cpp submodule not found — disabling. Run: git submodule update --init --recursive")
+    set(MT_ENABLE_LLAMA_CPP OFF CACHE BOOL "" FORCE)
 endif()
-
-if(MSVC)
-	set(WINDOWS TRUE)
-	set(PLATFORM_FOLDER "Windows")
+if (MT_ENABLE_MBEDTLS AND NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/other/lib/mbedtls/CMakeLists.txt")
+    message(WARNING "mbedtls submodule not found — disabling. Run: git submodule update --init --recursive")
+    set(MT_ENABLE_MBEDTLS OFF CACHE BOOL "" FORCE)
+endif()
+if (MT_ENABLE_FTXUI AND NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/other/lib/ftxui/CMakeLists.txt")
+    message(WARNING "ftxui submodule not found — disabling. Run: git submodule update --init --recursive")
+    set(MT_ENABLE_FTXUI OFF CACHE BOOL "" FORCE)
 endif()
 
 #set(CMAKE_BUILD_TYPE Debug)
@@ -28,63 +51,38 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED On)
 set(CMAKE_CXX_EXTENSIONS Off)
 
-set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fpermissive")
-set(CMAKE_C_FLAGS "$(CMAKE_C_FLAGS) -fpermissive")
+# -Wno-narrowing: vendored code has benign narrowing conversions in braced-init lists;
+# clang treats these as hard errors and -Werror/strict GCC promotes them. Suppress
+# globally so the build is portable across toolchains.
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fpermissive -Wno-narrowing")
+set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wno-implicit-function-declaration")
+set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wint-conversion")
 
-add_definitions(
-    -DIMGUI_IMPL_OPENGL_LOADER_GL3W
-)
-
-if(LINUX)
 add_definitions(
     -DLINUX
+    -DIMGUI_IMPL_OPENGL_LOADER_GL3W
+    -DENABLE_IMGUI_TEST_ENGINE
+    -DMT_CAMERA_CAPTURE_ENABLED
 )
-endif()
 
-
-if(APPLE)
-add_definitions(
-	-DMACOS
-)
-endif()
-
-list(APPEND CMAKE_PREFIX_PATH "${CMAKE_BINARY_DIR}")
-find_package(SDL2 REQUIRED CONFIG)
-include_directories(${SDL2_INCLUDE_DIRS})
-
-if(LINUX)
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(GTK3 REQUIRED gtk+-3.0)
 include_directories(${GTK3_INCLUDE_DIRS})
 link_directories(${GTK3_LIBRARY_DIRS})
 add_definitions(${GTK3_CFLAGS_OTHER})
+find_package(SDL2 REQUIRED)
+include_directories(${SDL2_INCLUDE_DIRS})
 find_package(ALSA REQUIRED)
-endif()
 
-if(LINUX)
-set(MTEngineSDL_PLATFORM_DIRECTORIES
+include_directories(
     "${CMAKE_CURRENT_BINARY_DIR}/../libclipboard/include"
     "${CMAKE_CURRENT_SOURCE_DIR}/other/lib/libclipboard/include"
     "${CMAKE_CURRENT_SOURCE_DIR}/platform/Linux/src.Linux"
     "${CMAKE_CURRENT_SOURCE_DIR}/platform/Linux/src.Linux/include"
-)
-elseif(APPLE)
-set(MTEngineSDL_PLATFORM_DIRECTORIES
-    "${CMAKE_CURRENT_BINARY_DIR}/platform/MacOS/src.MacOS"
-    "${CMAKE_CURRENT_BINARY_DIR}/platform/MacOS/include"
-)
-elseif(MSVC)
-set(MTEngineSDL_PLATFORM_DIRECTORIES
-    "${CMAKE_CURRENT_BINARY_DIR}/platform/Windows/src.Windows"
-    "${CMAKE_CURRENT_BINARY_DIR}/platform/Windows/include"
-)
-endif()
-
-include_directories(
-	${MTEngineSDL_PLATFORM_DIRECTORIES}
     "${CMAKE_CURRENT_SOURCE_DIR}/."
     "${CMAKE_CURRENT_SOURCE_DIR}/./src"
     "${CMAKE_CURRENT_SOURCE_DIR}/./src/Embedded"
+    "${CMAKE_CURRENT_SOURCE_DIR}/./src/Engine"
     "${CMAKE_CURRENT_SOURCE_DIR}/./src/Engine/Audio"
     "${CMAKE_CURRENT_SOURCE_DIR}/./src/Engine/Audio/MIDI"
     "${CMAKE_CURRENT_SOURCE_DIR}/./src/Engine/Audio/WAV"
@@ -98,9 +96,11 @@ include_directories(
     "${CMAKE_CURRENT_SOURCE_DIR}/./src/Engine/Funct/ImageProcessing"
     "${CMAKE_CURRENT_SOURCE_DIR}/./src/Engine/Funct/ImageProcessing/resampler"
     "${CMAKE_CURRENT_SOURCE_DIR}/./src/Engine/Funct/ImageProcessing/stb_image"
+    "${CMAKE_CURRENT_SOURCE_DIR}/./src/Engine/Funct/ContinuousParam"
     "${CMAKE_CURRENT_SOURCE_DIR}/./src/Engine/GUI"
     "${CMAKE_CURRENT_SOURCE_DIR}/./src/Engine/GUI/AudioMixer"
     "${CMAKE_CURRENT_SOURCE_DIR}/./src/Engine/GUI/Controls"
+    "${CMAKE_CURRENT_SOURCE_DIR}/./src/Engine/GUI/Fonts"
     "${CMAKE_CURRENT_SOURCE_DIR}/./src/Engine/GUI/Helpers"
     "${CMAKE_CURRENT_SOURCE_DIR}/./src/Engine/GUI/Helpers/LoadingScreen"
     "${CMAKE_CURRENT_SOURCE_DIR}/./src/Engine/GUI/Helpers/ResourceManager"
@@ -108,8 +108,12 @@ include_directories(
     "${CMAKE_CURRENT_SOURCE_DIR}/./src/Engine/GUI/Waveform"
     "${CMAKE_CURRENT_SOURCE_DIR}/./src/Engine/Libs/ENet"
     "${CMAKE_CURRENT_SOURCE_DIR}/./src/Engine/Libs/hjson"
+    "${CMAKE_CURRENT_SOURCE_DIR}/./src/Engine/Libs/crow"
+    "${CMAKE_CURRENT_SOURCE_DIR}/./src/Engine/Libs/httplib"
     "${CMAKE_CURRENT_SOURCE_DIR}/./src/Engine/Libs/imgui"
     "${CMAKE_CURRENT_SOURCE_DIR}/./src/Engine/Libs/imguiext"
+    "${CMAKE_CURRENT_SOURCE_DIR}/./src/Engine/Libs/libtmt"
+    "${CMAKE_CURRENT_SOURCE_DIR}/./src/Engine/Libs/md4c"
     "${CMAKE_CURRENT_SOURCE_DIR}/./src/Engine/Libs/imgui-notify"
     "${CMAKE_CURRENT_SOURCE_DIR}/./src/Engine/Libs/implot"
     "${CMAKE_CURRENT_SOURCE_DIR}/./src/Engine/Libs/jpeg"
@@ -124,17 +128,171 @@ include_directories(
     "${CMAKE_CURRENT_SOURCE_DIR}/./src/Engine/Libs/md5"
     "${CMAKE_CURRENT_SOURCE_DIR}/./src/Engine/Libs/minizip"
     "${CMAKE_CURRENT_SOURCE_DIR}/./src/Engine/Libs/mtrand"
+    "${CMAKE_CURRENT_SOURCE_DIR}/./src/Engine/Libs/nlohmann"
     "${CMAKE_CURRENT_SOURCE_DIR}/./src/Engine/Libs/nfd"
     "${CMAKE_CURRENT_SOURCE_DIR}/./src/Engine/Libs/pugixml"
     "${CMAKE_CURRENT_SOURCE_DIR}/./src/Engine/Libs/rtmidi"
     "${CMAKE_CURRENT_SOURCE_DIR}/./src/Engine/Libs/stb"
+    "${CMAKE_CURRENT_SOURCE_DIR}/./src/Engine/Libs/basis_universal/transcoder"
+    "${CMAKE_CURRENT_SOURCE_DIR}/./src/Engine/Libs/basis_universal/zstd"
+    "${CMAKE_CURRENT_SOURCE_DIR}/./src/Engine/Libs/sgSHA256"
     "${CMAKE_CURRENT_SOURCE_DIR}/./src/Engine/Libs/tremor"
     "${CMAKE_CURRENT_SOURCE_DIR}/./src/Engine/Libs/tremor/Ogg"
     "${CMAKE_CURRENT_SOURCE_DIR}/./src/Engine/Libs/utf8"
+    "${CMAKE_CURRENT_SOURCE_DIR}/./src/Engine/Libs/uWebSockets"
     "${CMAKE_CURRENT_SOURCE_DIR}/./src/Engine/Libs/zlib"
+    "${CMAKE_CURRENT_SOURCE_DIR}/./src/Engine/Libs/imgui_test_engine"
+    "${CMAKE_CURRENT_SOURCE_DIR}/./src/Engine/Libs/imgui_test_engine/thirdparty"
+    "${CMAKE_CURRENT_SOURCE_DIR}/./src/Engine/Libs/imgui_test_engine/thirdparty/Str"
+    "${CMAKE_CURRENT_SOURCE_DIR}/./src/Engine/Libs/imgui_test_engine/thirdparty/stb"
+    "${CMAKE_CURRENT_SOURCE_DIR}/./src/Engine/Tests"
+    "${CMAKE_CURRENT_SOURCE_DIR}/./src/Engine/Tools"
+    "${CMAKE_CURRENT_SOURCE_DIR}/./src/Engine/Tools/NetGame"
+
+    # llama.cpp (submodule)
+    "${CMAKE_CURRENT_SOURCE_DIR}/other/lib/llama.cpp/include"
+    "${CMAKE_CURRENT_SOURCE_DIR}/other/lib/llama.cpp/ggml/include"
+
+    # mbedTLS (submodule, used by cpp-httplib HTTPS client)
+    "${CMAKE_CURRENT_SOURCE_DIR}/other/lib/mbedtls/include"
+    "${CMAKE_CURRENT_SOURCE_DIR}/other/lib/mbedtls/library"
+
+    # FTXUI (submodule, terminal UI for admin dashboard)
+    "${CMAKE_CURRENT_SOURCE_DIR}/other/lib/ftxui/include"
 )
 
-set(MTEngineSDL_SOURCES 
+if (MT_ENABLE_LLAMA_CPP)
+    add_definitions(-DMT_ENABLE_LLAMA_CPP=1)
+else()
+    add_definitions(-DMT_ENABLE_LLAMA_CPP=0)
+endif()
+
+if (MT_ENABLE_MBEDTLS)
+    add_definitions(-DMT_ENABLE_MBEDTLS=1)
+else()
+    add_definitions(-DMT_ENABLE_MBEDTLS=0)
+endif()
+
+if (MT_ENABLE_FTXUI)
+    add_definitions(-DMT_ENABLE_FTXUI=1)
+else()
+    add_definitions(-DMT_ENABLE_FTXUI=0)
+endif()
+
+if (MT_LLAMA_CUDA)
+    add_definitions(-DMT_LLAMA_CUDA=1)
+endif()
+
+if (MT_LLAMA_VULKAN)
+    add_definitions(-DMT_LLAMA_VULKAN=1)
+endif()
+
+if (MT_ENABLE_LLAMA_CPP)
+    # Build upstream llama.cpp as a subproject and package its static libs into a single archive.
+    # This keeps the engine integration simple: link against a single `llama_cpp` static library.
+
+    set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
+
+    set(LLAMA_BUILD_COMMON OFF CACHE BOOL "" FORCE)
+    set(LLAMA_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+    set(LLAMA_BUILD_TOOLS OFF CACHE BOOL "" FORCE)
+    set(LLAMA_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
+    set(LLAMA_BUILD_SERVER OFF CACHE BOOL "" FORCE)
+    set(LLAMA_TOOLS_INSTALL OFF CACHE BOOL "" FORCE)
+    set(LLAMA_TESTS_INSTALL OFF CACHE BOOL "" FORCE)
+
+    set(GGML_NATIVE ${MT_GGML_NATIVE} CACHE BOOL "" FORCE)
+    set(GGML_CUDA ${MT_LLAMA_CUDA} CACHE BOOL "" FORCE)
+    set(GGML_VULKAN ${MT_LLAMA_VULKAN} CACHE BOOL "" FORCE)
+
+    add_subdirectory(other/lib/llama.cpp "${CMAKE_CURRENT_BINARY_DIR}/llama.cpp" EXCLUDE_FROM_ALL)
+
+    set(LLAMA_CPP_INPUT_TARGETS llama ggml ggml-base ggml-cpu)
+    if (MT_LLAMA_CUDA)
+        list(APPEND LLAMA_CPP_INPUT_TARGETS ggml-cuda)
+    endif()
+    if (MT_LLAMA_VULKAN)
+        list(APPEND LLAMA_CPP_INPUT_TARGETS ggml-vulkan)
+    endif()
+
+    foreach(t IN LISTS LLAMA_CPP_INPUT_TARGETS)
+        if (NOT TARGET ${t})
+            message(FATAL_ERROR "llama.cpp: expected target '${t}' not found")
+        endif()
+    endforeach()
+
+    set(LLAMA_CPP_ARCHIVE "${CMAKE_CURRENT_BINARY_DIR}/libllama_cpp.a")
+    set(LLAMA_CPP_INPUT_LIBS)
+    foreach(t IN LISTS LLAMA_CPP_INPUT_TARGETS)
+        list(APPEND LLAMA_CPP_INPUT_LIBS "$<TARGET_FILE:${t}>")
+    endforeach()
+
+    add_custom_command(
+        OUTPUT "${LLAMA_CPP_ARCHIVE}"
+        COMMAND "${CMAKE_COMMAND}"
+                "-DOUT=${LLAMA_CPP_ARCHIVE}"
+                "-DAR=${CMAKE_AR}"
+                "-DRANLIB=${CMAKE_RANLIB}"
+                "-DLIBS=$<JOIN:${LLAMA_CPP_INPUT_LIBS},|>"
+                -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/mt_llama_cpp_archive.cmake"
+        DEPENDS ${LLAMA_CPP_INPUT_TARGETS}
+        VERBATIM
+        COMMAND_EXPAND_LISTS
+    )
+
+    add_custom_target(llama_cpp_archive DEPENDS "${LLAMA_CPP_ARCHIVE}")
+
+    add_library(llama_cpp STATIC IMPORTED GLOBAL)
+    set_target_properties(llama_cpp PROPERTIES IMPORTED_LOCATION "${LLAMA_CPP_ARCHIVE}")
+    add_dependencies(llama_cpp llama_cpp_archive)
+endif()
+
+if (MT_ENABLE_FTXUI)
+    # Build FTXUI as a subproject and package its 3 component static libs into a single archive.
+    set(FTXUI_BUILD_DOCS OFF CACHE BOOL "" FORCE)
+    set(FTXUI_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
+    set(FTXUI_BUILD_MODULES OFF CACHE BOOL "" FORCE)
+    set(FTXUI_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+    set(FTXUI_BUILD_TESTS_FUZZER OFF CACHE BOOL "" FORCE)
+    set(FTXUI_ENABLE_INSTALL OFF CACHE BOOL "" FORCE)
+    set(FTXUI_QUIET ON CACHE BOOL "" FORCE)
+
+    add_subdirectory(other/lib/ftxui "${CMAKE_CURRENT_BINARY_DIR}/ftxui" EXCLUDE_FROM_ALL)
+
+    set(FTXUI_INPUT_TARGETS screen dom component)
+    foreach(t IN LISTS FTXUI_INPUT_TARGETS)
+        if (NOT TARGET ${t})
+            message(FATAL_ERROR "FTXUI: expected target '${t}' not found")
+        endif()
+    endforeach()
+
+    set(FTXUI_ARCHIVE "${CMAKE_CURRENT_BINARY_DIR}/libftxui.a")
+    set(FTXUI_INPUT_LIBS)
+    foreach(t IN LISTS FTXUI_INPUT_TARGETS)
+        list(APPEND FTXUI_INPUT_LIBS "$<TARGET_FILE:${t}>")
+    endforeach()
+
+    add_custom_command(
+        OUTPUT "${FTXUI_ARCHIVE}"
+        COMMAND "${CMAKE_COMMAND}"
+                "-DOUT=${FTXUI_ARCHIVE}"
+                "-DAR=${CMAKE_AR}"
+                "-DRANLIB=${CMAKE_RANLIB}"
+                "-DLIBS=$<JOIN:${FTXUI_INPUT_LIBS},|>"
+                -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/mt_llama_cpp_archive.cmake"
+        DEPENDS ${FTXUI_INPUT_TARGETS}
+        VERBATIM
+        COMMAND_EXPAND_LISTS
+    )
+
+    add_custom_target(ftxui_archive DEPENDS "${FTXUI_ARCHIVE}")
+
+    add_library(ftxui_bundle STATIC IMPORTED GLOBAL)
+    set_target_properties(ftxui_bundle PROPERTIES IMPORTED_LOCATION "${FTXUI_ARCHIVE}")
+    add_dependencies(ftxui_bundle ftxui_archive)
+endif()
+
+add_library(MTEngineSDL STATIC
     "${CMAKE_CURRENT_SOURCE_DIR}/./src/Embedded/RES_Embedded.cpp"
 
     "${CMAKE_CURRENT_SOURCE_DIR}/./src/Engine/Audio/WAV/SND_WavReader.cpp"
@@ -148,6 +306,10 @@ set(MTEngineSDL_SOURCES
     "${CMAKE_CURRENT_SOURCE_DIR}/./src/Engine/Audio/CSlrMusicFile.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/./src/Engine/Audio/CSlrMusicFileOgg.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/./src/Engine/Audio/CSlrMusicSwitcher.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/./src/Engine/Audio/CSlrMusicPlaylistController.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/./src/Engine/Audio/CSlrMusicPlaylistPersistence.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/./src/Engine/Audio/CSlrMusicCueTransitionPlanner.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/./src/Engine/Audio/CPlaylistPlaybackManager.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/./src/Engine/Audio/SND_Main.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/./src/Engine/Audio/SND_SoundEngine.cpp"
 
@@ -167,17 +329,19 @@ set(MTEngineSDL_SOURCES
     "${CMAKE_CURRENT_SOURCE_DIR}/./src/Engine/Core/Render/VID_Main.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/./src/Engine/Core/Render/VID_ImageBinding.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/./src/Engine/Core/Render/CRenderBackend.cpp"
-    "${CMAKE_CURRENT_SOURCE_DIR}/./src/Engine/Core/Render/CRenderBackendOpenGL3.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/./src/Engine/Core/Render/CRenderBackendOpenGL4.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/./src/Engine/Core/Render/CRenderShader.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/./src/Engine/Core/Render/CRenderShaderOpenGL4.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/./src/Engine/Core/Render/CRenderShaderOpenGL4ShaderToy.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/./src/Engine/Core/Render/CRenderShaderMaskedTile.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/./src/Engine/Core/Render/CRenderShaderMaskedTileQueued.cpp"
 
     "${CMAKE_CURRENT_SOURCE_DIR}/./src/Engine/Core/CByteBuffer.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/./src/Engine/Core/CConfigStorage.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/./src/Engine/Core/CConfigStorageHjson.cpp"
-    "${CMAKE_CURRENT_SOURCE_DIR}/./src/Engine/Core/CContinuousParam.cpp"
-    "${CMAKE_CURRENT_SOURCE_DIR}/./src/Engine/Core/CContinuousParamBezier.cpp"
-    "${CMAKE_CURRENT_SOURCE_DIR}/./src/Engine/Core/CContinuousParamLinear.cpp"
-    "${CMAKE_CURRENT_SOURCE_DIR}/./src/Engine/Core/CContinuousParamSin.cpp"
-    "${CMAKE_CURRENT_SOURCE_DIR}/./src/Engine/Core/CContinuousParamSinHalf.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/./src/Engine/Core/CDataAdapter.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/./src/Engine/Core/CI18nManager.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/./src/Engine/Core/CCameraCapture.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/./src/Engine/Core/CImageData.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/./src/Engine/Core/CSlrAnimation.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/./src/Engine/Core/CSlrAnimationState.cpp"
@@ -193,12 +357,28 @@ set(MTEngineSDL_SOURCES
     "${CMAKE_CURRENT_SOURCE_DIR}/./src/Engine/Core/CSlrImageMask.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/./src/Engine/Core/CSlrImageTexture.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/./src/Engine/Core/CSlrKeyboardShortcuts.cpp"
+
+    "${CMAKE_CURRENT_SOURCE_DIR}/./src/Engine/Sci/Llama/CLlamaService.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/./src/Engine/Sci/Llama/CLlamaModelManager.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/./src/Engine/Sci/Llama/CLlamaPromptAgent.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/./src/Engine/Sci/Llama/CLlamaTaskQueue.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/./src/Engine/Sci/Llama/CLlamaModelDownloader.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/./src/Engine/Sci/Llama/LLamaBackend_Stub.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/./src/Engine/Sci/Llama/LLamaBackend_LlamaCpp.cpp"
+
+    "${CMAKE_CURRENT_SOURCE_DIR}/./src/Engine/Libs/httplib/httplib_vendor.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/./src/Engine/Libs/libtmt/tmt.c"
+    "${CMAKE_CURRENT_SOURCE_DIR}/./src/Engine/Libs/basis_universal/transcoder/basisu_transcoder.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/./src/Engine/Libs/basis_universal/zstd/zstd.c"
+
+    "${CMAKE_CURRENT_SOURCE_DIR}/./src/Engine/Tests/CTestLlamaAvailability.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/./src/Engine/Core/CSlrResourceBase.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/./src/Engine/Core/CSlrString.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/./src/Engine/Core/CSlrTextParser.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/./src/Engine/Core/CSlrDate.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/./src/Engine/Core/CSlrTexture.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/./src/Engine/Core/CSystemFileDialogCallback.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/./src/Engine/Core/DBG_LogForCWrapper.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/./src/Engine/Core/MTH_FastMath.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/./src/Engine/Core/MTH_FixedPoint.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/./src/Engine/Core/MTH_Random.cpp"
@@ -225,10 +405,20 @@ set(MTEngineSDL_SOURCES
     "${CMAKE_CURRENT_SOURCE_DIR}/./src/Engine/Funct/ImageProcessing/IMG_HoughLines.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/./src/Engine/Funct/ImageProcessing/IMG_Scale.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/./src/Engine/Funct/ImageProcessing/IMG_SimpleSegmentation.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/./src/Engine/Funct/ContinuousParam/CContinuousParam.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/./src/Engine/Funct/ContinuousParam/CContinuousParamBezier.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/./src/Engine/Funct/ContinuousParam/CContinuousParamLinear.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/./src/Engine/Funct/ContinuousParam/CContinuousParamSin.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/./src/Engine/Funct/ContinuousParam/CContinuousParamSinHalf.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/./src/Engine/Funct/CHjsonSerializer.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/./src/Engine/Funct/CFeatureConfig.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/./src/Engine/Funct/FUN_IntervalTree.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/./src/Engine/Funct/FUN_GenerateSinTab.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/./src/Engine/Funct/FFT/rad2fft.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/./src/Engine/Funct/FFT/SpectrumAnalysis.cpp"
 
     "${CMAKE_CURRENT_SOURCE_DIR}/./src/Engine/GUI/AudioMixer/CViewAudioMixer.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/./src/Engine/GUI/Fonts/CGuiFontManager.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/./src/Engine/GUI/Controls/CColorsTheme.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/./src/Engine/GUI/Controls/CGuiBackground.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/./src/Engine/GUI/Controls/CGuiButton.cpp"
@@ -264,6 +454,7 @@ set(MTEngineSDL_SOURCES
     "${CMAKE_CURRENT_SOURCE_DIR}/./src/Engine/GUI/Controls/CGuiViewSplit4.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/./src/Engine/GUI/Controls/CGuiViewToolBox.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/./src/Engine/GUI/Controls/CGuiViewVerticalScroll.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/./src/Engine/GUI/Controls/CGuiViewTerminal.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/./src/Engine/GUI/Controls/CGuiViewWindowsManager.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/./src/Engine/GUI/Controls/CGuiWindow.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/./src/Engine/GUI/Controls/CGuiViewMovingPaneImage.cpp"
@@ -274,18 +465,27 @@ set(MTEngineSDL_SOURCES
     "${CMAKE_CURRENT_SOURCE_DIR}/./src/Engine/GUI/Helpers/ResourceManager/CGuiViewResourceManager.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/./src/Engine/GUI/Helpers/CRecentlyOpenedFiles.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/./src/Engine/GUI/Helpers/CGuiViewDebugLog.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/./src/Engine/GUI/Helpers/CGuiViewLlamaModelLoader.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/./src/Engine/GUI/Helpers/CGuiViewLlamaChat.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/./src/Engine/GUI/Helpers/CViewLlamaTaskQueue.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/./src/Engine/GUI/Helpers/CGuiViewUiDebug.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/./src/Engine/GUI/Helpers/CGuiViewMessages.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/./src/Engine/GUI/Helpers/CGuiViewProgressBarWindow.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/./src/Engine/GUI/Helpers/CGuiViewConsole.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/./src/Engine/GUI/Helpers/CGuiViewDummy.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/./src/Engine/GUI/Helpers/CGuiViewDummySimple.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/./src/Engine/GUI/Helpers/CGuiViewMusicPlaylist.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/./src/Engine/GUI/Helpers/CGuiViewImageWithLayer.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/./src/Engine/GUI/Helpers/CGuiViewTableItem.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/./src/Engine/GUI/Helpers/CGuiViewTableWithFilterAndButtons.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/./src/Engine/GUI/Helpers/CGuiViewSearch.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/./src/Engine/GUI/Helpers/CViewCamera.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/./src/Engine/GUI/Helpers/GUI_Debug.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/./src/Engine/GUI/Layout/CLayoutManager.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/./src/Engine/GUI/Layout/CLayoutParameter.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/./src/Engine/GUI/Waveform/CWaveformData.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/./src/Engine/GUI/Waveform/CViewWaveform.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/./src/Engine/GUI/Waveform/CMusicWaveformCache.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/./src/Engine/GUI/CGuiMain.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/./src/Engine/GUI/COneTouchData.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/./src/Engine/GUI/GUI_Main.cpp"
@@ -304,6 +504,7 @@ set(MTEngineSDL_SOURCES
     "${CMAKE_CURRENT_SOURCE_DIR}/./src/Engine/Libs/hjson/hjson_encode.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/./src/Engine/Libs/hjson/hjson_parsenumber.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/./src/Engine/Libs/hjson/hjson_value.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/./src/Engine/Libs/nlohmann/FUN_ConvertHjsonToJson.cpp"
 
     "${CMAKE_CURRENT_SOURCE_DIR}/./src/Engine/Libs/imgui/imgui_demo.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/./src/Engine/Libs/imgui/imgui_draw.cpp"
@@ -312,7 +513,6 @@ set(MTEngineSDL_SOURCES
     "${CMAKE_CURRENT_SOURCE_DIR}/./src/Engine/Libs/imgui/imgui_impl_sdl2.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/./src/Engine/Libs/imgui/imgui_tables.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/./src/Engine/Libs/imgui/imgui_widgets.cpp"
-    "${CMAKE_CURRENT_SOURCE_DIR}/./src/Engine/Libs/imgui/imgui_demo.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/./src/Engine/Libs/imgui/imgui.cpp"
 
     "${CMAKE_CURRENT_SOURCE_DIR}/./src/Engine/Libs/imguiext/imguial_fonts.cpp"
@@ -321,6 +521,9 @@ set(MTEngineSDL_SOURCES
     "${CMAKE_CURRENT_SOURCE_DIR}/./src/Engine/Libs/imguiext/imguiComboFilter.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/./src/Engine/Libs/imguiext/imguifilesystem.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/./src/Engine/Libs/imguiext/imgui_toggle.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/./src/Engine/Libs/imguiext/imgui_stdlib.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/./src/Engine/Libs/imguiext/imgui_md.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/./src/Engine/Libs/imguiext/imguihelper.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/./src/Engine/Libs/imguiext/ImGuiUtils.h"
 
 # TODO: move font awesome from here
@@ -330,6 +533,55 @@ set(MTEngineSDL_SOURCES
     "${CMAKE_CURRENT_SOURCE_DIR}/./src/Engine/Libs/implot/implot_items.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/./src/Engine/Libs/implot/implot_colors_extension.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/./src/Engine/Libs/implot/implot.cpp"
+
+    "${CMAKE_CURRENT_SOURCE_DIR}/./src/Engine/Libs/imgui_test_engine/imgui_capture_tool.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/./src/Engine/Libs/imgui_test_engine/imgui_te_context.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/./src/Engine/Libs/imgui_test_engine/imgui_te_coroutine.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/./src/Engine/Libs/imgui_test_engine/imgui_te_engine.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/./src/Engine/Libs/imgui_test_engine/imgui_te_exporters.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/./src/Engine/Libs/imgui_test_engine/imgui_te_perftool.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/./src/Engine/Libs/imgui_test_engine/imgui_te_ui.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/./src/Engine/Libs/imgui_test_engine/imgui_te_utils.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/./src/Engine/Tests/CImGuiTestEngine.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/./src/Engine/Tests/CTest.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/./src/Engine/Tests/CTestRunner.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/./src/Engine/Tests/CTestSuite.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/./src/Engine/Tests/CTestI18nEngine.cpp"
+
+    "${CMAKE_CURRENT_SOURCE_DIR}/./src/Engine/Tools/CProcessSpawner.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/./src/Engine/Tools/CInterruptibleSleep.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/./src/Engine/Tools/CTask.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/./src/Engine/Tools/CTaskScheduler.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/./src/Engine/Tools/NetGame/CNetGameUserProfile.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/./src/Engine/Tools/NetGame/CNetGamePackets.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/./src/Engine/Tools/NetGame/CChatHistory.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/./src/Engine/Tools/NetGame/CNetGameServer.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/./src/Engine/Tools/NetGame/CServerGame.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/./src/Engine/Tools/NetGame/CLobbyLink.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/./src/Engine/Tools/NetGame/CLobbyServiceServer.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/./src/Engine/Tools/NetGame/CGameServerRegistry.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/./src/Engine/Tools/NetGame/CRegistryServer.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/./src/Engine/Tools/NetGame/CRegistryClient.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/./src/Engine/Tools/NetGame/CNetLobbyServer.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/./src/Engine/Tools/NetGame/CNetLobbyClient.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/./src/Engine/Tools/NetGame/CNetGameClient.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/./src/Engine/Tools/NetGame/CAuthServiceProcess.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/./src/Engine/Tools/NetGame/CAuthServiceServer.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/./src/Engine/Tools/NetGame/CGameServerProcessBase.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/./src/Engine/Tools/NetGame/CNetGameDataProvider.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/./src/Engine/Tools/NetGame/CNetGameDataProviderLocalFiles.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/./src/Engine/Tools/NetGame/CServerGamesManagerBase.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/./src/Engine/Tools/NetGame/CAssetServer.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/./src/Engine/Tools/NetGame/CAssetServerProcess.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/./src/Engine/Tools/NetGame/CClusterConfig.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/./src/Engine/Tools/NetGame/CDownloadTracker.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/./src/Engine/Tools/NetGame/CFileDownloader.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/./src/Engine/Tools/NetGame/CNodeAgent.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/./src/Engine/Tools/NetGame/CSnapshotStorage.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/./src/Engine/Tools/NetGame/CTurnBasedGameServer.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/./src/Engine/Tools/NetGame/CViewGameClient.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/./src/Engine/Tools/NetGame/CViewGameServer.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/./src/Engine/Tools/NetGame/CViewServerAdmin.cpp"
 
     "${CMAKE_CURRENT_SOURCE_DIR}/./src/Engine/Libs/jpeg/jpeg-9a/jcapimin.c"
     "${CMAKE_CURRENT_SOURCE_DIR}/./src/Engine/Libs/jpeg/jpeg-9a/transupp.c"
@@ -429,6 +681,8 @@ set(MTEngineSDL_SOURCES
 
     "${CMAKE_CURRENT_SOURCE_DIR}/./src/Engine/Libs/md5/MD5.cpp"
 
+    "${CMAKE_CURRENT_SOURCE_DIR}/./src/Engine/Libs/sgSHA256/sgSHA256.cpp"
+
     "${CMAKE_CURRENT_SOURCE_DIR}/./src/Engine/Libs/minizip/zip.c"
     "${CMAKE_CURRENT_SOURCE_DIR}/./src/Engine/Libs/minizip/mztools.c"
     "${CMAKE_CURRENT_SOURCE_DIR}/./src/Engine/Libs/minizip/ioapi.c"
@@ -476,63 +730,32 @@ set(MTEngineSDL_SOURCES
     "${CMAKE_CURRENT_SOURCE_DIR}/./src/Engine/Libs/zlib/trees.c"
     "${CMAKE_CURRENT_SOURCE_DIR}/./src/Engine/Libs/zlib/compress.c"
     "${CMAKE_CURRENT_SOURCE_DIR}/./src/Engine/Libs/zlib/crc32.c"
+
+    "${CMAKE_CURRENT_SOURCE_DIR}/./platform/Linux/src.Linux/nfd/nfd_zenity.c"
+    "${CMAKE_CURRENT_SOURCE_DIR}/./platform/Linux/src.Linux/CCameraLinux.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/./platform/Linux/src.Linux/CSlrFileFromDocuments.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/./platform/Linux/src.Linux/CSlrFileFromOS.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/./platform/Linux/src.Linux/CSlrFileFromResources.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/./platform/Linux/src.Linux/CSlrFileFromTemp.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/./platform/Linux/src.Linux/DBG_Log.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/./platform/Linux/src.Linux/gl3w.c"
+    "${CMAKE_CURRENT_SOURCE_DIR}/./platform/Linux/src.Linux/main.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/./platform/Linux/src.Linux/SYS_FileSystem.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/./platform/Linux/src.Linux/SYS_Memory.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/./platform/Linux/src.Linux/SYS_Platform.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/./platform/Linux/src.Linux/SYS_SharedMemory.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/./platform/Linux/src.Linux/SYS_LinuxWrapper.cpp"
+
 )
 
-if(LINUX)
-set(MTEngineSDL_PLATFORM_SOURCES
-	"${CMAKE_CURRENT_SOURCE_DIR}/./platform/Linux/src.Linux/main.cpp"
-	"${CMAKE_CURRENT_SOURCE_DIR}/./platform/Linux/src.Linux/CSlrFileFromDocuments.cpp"
-	"${CMAKE_CURRENT_SOURCE_DIR}/./platform/Linux/src.Linux/CSlrFileFromOS.cpp"
-	"${CMAKE_CURRENT_SOURCE_DIR}/./platform/Linux/src.Linux/CSlrFileFromResources.cpp"
-	"${CMAKE_CURRENT_SOURCE_DIR}/./platform/Linux/src.Linux/CSlrFileFromTemp.cpp"
-	"${CMAKE_CURRENT_SOURCE_DIR}/./platform/Linux/src.Linux/DBG_Log.cpp"
-	"${CMAKE_CURRENT_SOURCE_DIR}/./platform/Linux/src.Linux/SYS_FileSystem.cpp"
-	"${CMAKE_CURRENT_SOURCE_DIR}/./platform/Linux/src.Linux/SYS_Memory.cpp"
-	"${CMAKE_CURRENT_SOURCE_DIR}/./platform/Linux/src.Linux/SYS_Platform.cpp"
-	"${CMAKE_CURRENT_SOURCE_DIR}/./platform/Linux/src.Linux/SYS_SharedMemory.cpp"
-	"${CMAKE_CURRENT_SOURCE_DIR}/./platform/Linux/src.Linux/SYS_LinuxWrapper.cpp"
-	"${CMAKE_CURRENT_SOURCE_DIR}/./platform/Linux/src.Linux/gl3w.c"
-	"${CMAKE_CURRENT_SOURCE_DIR}/./platform/Linux/src.Linux/nfd/nfd_zenity.c"
-)
-elseif(APPLE)
-set(MTEngineSDL_PLATFORM_SOURCES
-	"${CMAKE_CURRENT_SOURCE_DIR}/./platform/MacOS/src.MacOS/main.mm"
-	"${CMAKE_CURRENT_SOURCE_DIR}/./platform/MacOS/src.MacOS/CSlrFileFromDocuments.mm"
-	"${CMAKE_CURRENT_SOURCE_DIR}/./platform/MacOS/src.MacOS/CSlrFileFromOS.mm"
-	"${CMAKE_CURRENT_SOURCE_DIR}/./platform/MacOS/src.MacOS/CSlrFileFromResources.mm"
-	"${CMAKE_CURRENT_SOURCE_DIR}/./platform/MacOS/src.MacOS/CSlrFileFromTemp.mm"
-	"${CMAKE_CURRENT_SOURCE_DIR}/./platform/MacOS/src.MacOS/DBG_Log.mm"
-	"${CMAKE_CURRENT_SOURCE_DIR}/./platform/MacOS/src.MacOS/SYS_FileSystem.mm"
-	"${CMAKE_CURRENT_SOURCE_DIR}/./platform/MacOS/src.MacOS/SYS_MacOS.mm"
-	"${CMAKE_CURRENT_SOURCE_DIR}/./platform/MacOS/src.MacOS/SYS_MacOSWrapper.mm"
-	"${CMAKE_CURRENT_SOURCE_DIR}/./platform/MacOS/src.MacOS/SYS_Memory.mm"
-	"${CMAKE_CURRENT_SOURCE_DIR}/./platform/MacOS/src.MacOS/SYS_Platform.mm"
-	"${CMAKE_CURRENT_SOURCE_DIR}/./platform/MacOS/src.MacOS/SYS_SharedMemory.mm"
-)
-elseif(MSVC)
-set(MTEngineSDL_PLATFORM_SOURCES
-	"${CMAKE_CURRENT_SOURCE_DIR}/./platform/Windows/src.Windows/main.cpp"
-	"${CMAKE_CURRENT_SOURCE_DIR}/./platform/Windows/src.Windows/CLogByteBuffer.cpp"
-	"${CMAKE_CURRENT_SOURCE_DIR}/./platform/Windows/src.Windows/CSlrFileFromDocuments.cpp"
-	"${CMAKE_CURRENT_SOURCE_DIR}/./platform/Windows/src.Windows/CSlrFileFromOS.cpp"
-	"${CMAKE_CURRENT_SOURCE_DIR}/./platform/Windows/src.Windows/CSlrFileFromResources.cpp"
-	"${CMAKE_CURRENT_SOURCE_DIR}/./platform/Windows/src.Windows/CSlrFileFromTemp.cpp"
-	"${CMAKE_CURRENT_SOURCE_DIR}/./platform/Windows/src.Windows/CSlrFontSystem.cpp"
-	"${CMAKE_CURRENT_SOURCE_DIR}/./platform/Windows/src.Windows/DBG_ConStream.cpp"
-	"${CMAKE_CURRENT_SOURCE_DIR}/./platform/Windows/src.Windows/DBG_Log.cpp"
-	"${CMAKE_CURRENT_SOURCE_DIR}/./platform/Windows/src.Windows/SYS_FileSystem.cpp"
-	"${CMAKE_CURRENT_SOURCE_DIR}/./platform/Windows/src.Windows/SYS_Memory.cpp"
-	"${CMAKE_CURRENT_SOURCE_DIR}/./platform/Windows/src.Windows/SYS_MiniDump.cpp"
-	"${CMAKE_CURRENT_SOURCE_DIR}/./platform/Windows/src.Windows/SYS_Platform.cpp"
-	"${CMAKE_CURRENT_SOURCE_DIR}/./platform/Windows/src.Windows/SYS_SharedMemory.cpp"
-	"${CMAKE_CURRENT_SOURCE_DIR}/./platform/Windows/src.Windows/nfd_win.cpp"
-	"${CMAKE_CURRENT_SOURCE_DIR}/./platform/Windows/src.Windows/win-gettimeofday.cpp"
-	"${CMAKE_CURRENT_SOURCE_DIR}/./platform/Windows/src.Windows/win-registry.cpp"
-	"${CMAKE_CURRENT_SOURCE_DIR}/./platform/Windows/src.Windows/win-usleep.cpp"
-)
+if (MT_ENABLE_LLAMA_CPP)
+    target_link_libraries(MTEngineSDL PRIVATE llama_cpp)
+    add_dependencies(MTEngineSDL llama_cpp_archive)
 endif()
 
-add_library(MTEngineSDL STATIC ${MTEngineSDL_SOURCES} ${MTEngineSDL_PLATFORM_SOURCES})
+if (MT_ENABLE_FTXUI)
+    target_link_libraries(MTEngineSDL PRIVATE ftxui_bundle)
+    add_dependencies(MTEngineSDL ftxui_archive)
+endif()
 
-file(GLOB_RECURSE MTEngineSDL_HEADER_FILES "src/**/*.h" "platform/${PLATFORM_FOLDER}/include/**/*.h")
-source_group(TREE ${CMAKE_SOURCE_DIR} FILES ${MTEngineSDL_SOURCES} ${MTEngineSDL_HEADER_FILES})
+target_link_libraries(MTEngineSDL PRIVATE v4l2)
