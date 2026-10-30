@@ -759,3 +759,7 @@ if (MT_ENABLE_FTXUI)
 endif()
 
 target_link_libraries(MTEngineSDL PRIVATE v4l2)
+
+get_target_property( _p MTEngineSDL SOURCES )
+string( REPLACE ";" "\n" _p "${_p}" )
+file( WRITE "brote_alt.txt" "${_p}" )

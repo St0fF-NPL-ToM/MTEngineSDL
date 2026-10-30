@@ -1,0 +1,83 @@
+#[[
+    This is the new approach of trying to create a cross-platform
+    buildsystem for MTEngineSDL
+
+    Engine folder …
+ ]]
+cmake_minimum_required( VERSION 4.2 )
+
+target_sources( MTEngineSDL PUBLIC
+    cderror.h
+    cdjpeg.c
+    cdjpeg.h
+    jaricom.c
+    jcapimin.c
+    jcapistd.c
+    jcarith.c
+    jccoefct.c
+    jccolor.c
+    jcdctmgr.c
+    jchuff.c
+    jcinit.c
+    jcmainct.c
+    jcmarker.c
+    jcmaster.c
+    jcomapi.c
+    jconfig.h
+    jcparam.c
+    jcprepct.c
+    jcsample.c
+    jctrans.c
+    jdapimin.c
+    jdapistd.c
+    jdarith.c
+    jdatadst.c
+    jdatasrc.c
+    jdcoefct.c
+    jdcolor.c
+    jdct.h
+    jddctmgr.c
+    jdhuff.c
+    jdinput.c
+    jdmainct.c
+    jdmarker.c
+    jdmaster.c
+    jdmerge.c
+    jdpostct.c
+    jdsample.c
+    jdtrans.c
+    jerror.c
+    jerror.h
+    jfdctflt.c
+    jfdctfst.c
+    jfdctint.c
+    jidctflt.c
+    jidctfst.c
+    jidctint.c
+    jinclude.h
+    jmemansi.c
+    jmemmgr.c
+    jmemsys.h
+    jmorecfg.h
+    jpegint.h
+    jpeglib.h
+    jquant1.c
+    jquant2.c
+    jutils.c
+    jversion.h
+    rdbmp.c
+    rdcolmap.c
+    rdgif.c
+    rdppm.c
+    rdrle.c
+    rdswitch.c
+    rdtarga.c
+    transupp.c
+    transupp.h
+    wrbmp.c
+    wrgif.c
+    wrppm.c
+    wrrle.c
+    wrtarga.c
+)
+target_include_directories( MTEngineSDL PUBLIC ${CMAKE_CURRENT_SOURCE_DIR} )
